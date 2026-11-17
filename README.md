@@ -45,6 +45,14 @@ uv run -q --script $S -m gemini-3.1-pro-preview "Explain monads in two sentences
 uv run -q --script $S --previous-interaction-id <id> "And give an example."
 ```
 
+For long Markdown docs, check Gemini's output before using it:
+
+```bash
+uv run -q --script ~/.claude/skills/ask-gemini/scripts/check_polish.py --fix --korean orig.md polished.md
+```
+
+It restores line endings, flags changed headings, links, code, URLs and numbers, broken bold (`**…**을`) and leftover spaced particles, and prints a wording-only diff.
+
 | Option | Description |
 |---|---|
 | `-m MODEL` | Model ID (default `gemini-3.5-flash-lite`, or set `ASK_GEMINI_MODEL`) |
@@ -84,3 +92,5 @@ Whatever you send goes to Google's Gemini API. By default the Interactions API s
 ## License
 
 MIT
+
+The Korean polish rules in `skills/ask-gemini/presets/polish-korean.md` are adapted from [fluent-korean](https://github.com/snflkd/fluent-korean), Copyright (c) 2026 snflkd, MIT License.

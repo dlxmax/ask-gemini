@@ -1,6 +1,6 @@
 ---
 name: ask-gemini
-description: Send a prompt to any Google Gemini model through the Gemini Interactions API and get the reply back, for a second opinion or a task Gemini does better. Main use is polishing non-English writing, especially Korean, into native-quality prose, since Claude's Korean tends to sound translated or stiff. Use this whenever you write, translate, or edit Korean (or Japanese, Chinese, or other non-English text) that a person will read — emails, messages, docs, UI strings, worksheets — even if the user doesn't mention Gemini. Also use it when the user says "ask Gemini", "run it by Gemini", "what does Gemini think", or names a Gemini model. Not for writing code that calls the Gemini API (that's gemini-interactions-api).
+description: Send a prompt to any Google Gemini model through the Gemini Interactions API and get the reply back, for a second opinion or a task Gemini does better. Main use is polishing non-English writing, especially Korean, into native-quality prose, since Claude's Korean tends to sound translated or stiff. Use this whenever you write, translate, or edit Korean (or Japanese, Chinese, or other non-English text) that a person will read (emails, messages, docs, UI strings, worksheets), even if the user doesn't mention Gemini. Also use it when the user says "ask Gemini", "run it by Gemini", "what does Gemini think", or names a Gemini model. Not for writing code that calls the Gemini API (that's gemini-interactions-api).
 ---
 
 # ask-gemini
@@ -47,6 +47,24 @@ This is the main use. Claude's Korean is usually correct but sounds translated: 
 4. Give the user the polished text. Say briefly that Gemini polished it, so they know where the wording came from.
 
 You can also polish an English draft straight into another language: the preset handles translation and rewriting in one step. For short text that has to be exact (legal wording, quoted UI labels), consider showing the user both versions.
+
+## Long or structured documents
+
+For Markdown docs, READMEs and anything over a page, "read the result" isn't enough: at this size Gemini (especially flash-lite) makes mistakes that look fine at a glance. Seen in practice: bold broken by a particle glued after `**`, spacing fixes it was asked for but skipped, and CRLF line endings dropped.
+
+1. Polish one file per call. Pass the constraints in `--notes`, for example: `"Edit only the Korean. Leave headings byte-for-byte unchanged (TOC anchors depend on them). Same number of lines, same order. Keep code, URLs, link targets, numbers, <br> and trailing two-space line breaks. Output the whole file with no code fences."`
+2. Save the output to a new file, never over the original.
+3. Check it mechanically:
+   ```bash
+   uv run -q --script <skill-dir>/scripts/check_polish.py --fix --korean orig.md polished.md
+   ```
+   `--fix` strips a wrapping code fence and restores the original line endings and final newline. The script then reports line-count changes, edited headings or non-Korean lines, lost trailing breaks, link targets/inline code/URLs/numbers/`<br>` that differ, literal `*` that shows up in the rendered Markdown (broken bold), and leftover spaced particles such as `v1 은` or `HA 에서` (with `--korean`). Several `orig new` pairs can go in one run. Drop `--korean` for other languages.
+4. Fix every reported problem by hand in the polished file, then rerun until it's clean.
+5. Review the wording diff it prints. It hides spacing-only changes, so you only read the real rewordings; check each against the original meaning.
+
+### Korean Markdown trap: particles after bold
+
+`**프리셋 (preset_mode)** 을` polished to `**프리셋(preset_mode)**을` renders a literal `**`: under CommonMark (and GitHub), a closing `**` right after punctuation and right before a letter isn't a closing delimiter. Write `**프리셋**(preset_mode)을` instead, or keep the space. `check_polish.py` catches this.
 
 ## Free-form requests
 

@@ -274,6 +274,8 @@ def build_polish_system(language: str, register: str | None, notes: str | None) 
         else "Keep the register and tone of the draft unless it is clearly wrong for the context."
     )
     out = template.replace("{language}", language).replace("{register_line}", register_line)
+    if language.strip().lower() in ("korean", "ko", "한국어"):
+        out += "\n\n" + (PRESET_DIR / "polish-korean.md").read_text(encoding="utf-8")
     if notes:
         out += f"\n\nAdditional instructions from the requester:\n{notes}"
     return out
