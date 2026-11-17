@@ -1,0 +1,11 @@
+{
+  "name": "ask-gemini",
+  "owner": { "name": "dlxmax" },
+  "plugins": [
+    {
+      "name": "ask-gemini",
+      "source": "./",
+      "description": "Let Claude call any Gemini model via the Interactions API — e.g. to polish Korean and other non-English writing."
+    }
+  ]
+}

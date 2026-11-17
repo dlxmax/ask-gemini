@@ -1,0 +1,7 @@
+# Local secrets / config — never commit
+grader-config.json
+*.key
+.env
+# Skill-creator workspaces
+*-workspace/
+__pycache__/
