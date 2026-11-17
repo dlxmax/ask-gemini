@@ -29,7 +29,7 @@ The reply goes to stdout. A line with the model and `interaction_id` goes to std
 | `--notes TEXT` | With `--polish`: audience, terms to keep, length limits, etc. |
 | `--fallback MODEL` / `--no-fallback` | Fallback chain, tried when the main model is out of quota or overloaded. Default `gemini-3.1-flash-lite` (env `ASK_GEMINI_FALLBACKS`). Use `--no-fallback` when the user asked for a specific model and a different one won't do. |
 | `-s TEXT` / `--system-file F` | System instruction for free-form requests. |
-| `--thinking LEVEL` | `low`/`medium`/`high`. `--polish` defaults to `high`, because light models ignore register instructions at low levels. |
+| `--thinking LEVEL` | `low`/`medium`/`high` (default `medium`, or set `ASK_GEMINI_THINKING`) |
 | `--previous-interaction-id ID` | Continue a conversation (stays on `--model`, no fallback). The server keeps the earlier turns, but system instructions apply to one turn only, so pass them again. |
 | `--no-store` | Don't store the interaction on Google's servers. This also disables follow-ups. |
 

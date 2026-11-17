@@ -53,7 +53,7 @@ uv run -q --script $S --previous-interaction-id <id> "And give an example."
 | `--notes TEXT` | Extra instructions for `--polish` |
 | `-s` / `--system-file` | System instruction |
 | `--fallback MODEL` / `--no-fallback` | Fallback chain (default `gemini-3.1-flash-lite`, or set `ASK_GEMINI_FALLBACKS`) |
-| `--thinking LEVEL` | `low`/`medium`/`high` (`--polish` defaults to `high`) |
+| `--thinking LEVEL` | `low`/`medium`/`high` (default `medium`, or set `ASK_GEMINI_THINKING`) |
 | `--previous-interaction-id` | Continue a conversation |
 | `--no-store` | Don't store the interaction server-side |
 | `--json` | Print `{model, interaction_id, text}` |

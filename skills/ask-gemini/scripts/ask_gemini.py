@@ -395,7 +395,8 @@ def main() -> None:
     p.add_argument("--register", help="With --polish: target register/tone (Korean default: 해요체).")
     p.add_argument("--notes", help="With --polish: extra instructions (audience, terms to keep, etc.).")
     p.add_argument("--thinking", choices=["low", "medium", "high"],
-                   help="thinking_level (default: high with --polish, else model default).")
+                   default=os.environ.get("ASK_GEMINI_THINKING", "medium"),
+                   help="thinking_level (default medium, or env ASK_GEMINI_THINKING).")
     p.add_argument("--previous-interaction-id",
                    help="Continue an earlier interaction (pins to --model; no fallback).")
     p.add_argument("--no-store", action="store_true", help="Don't store the interaction server-side.")
@@ -426,10 +427,7 @@ def main() -> None:
     kwargs: dict = {"input": prompt}
     if system:
         kwargs["system_instruction"] = system
-    # Light models skip register instructions at low thinking levels, so polish defaults to high.
-    thinking = args.thinking or ("high" if args.polish else None)
-    if thinking:
-        kwargs["generation_config"] = {"thinking_level": thinking}
+    kwargs["generation_config"] = {"thinking_level": args.thinking}
     if args.previous_interaction_id:
         kwargs["previous_interaction_id"] = args.previous_interaction_id
     if args.no_store:
