@@ -80,7 +80,7 @@ uv run -q --script <skill-dir>/scripts/probe.py embed    --embed gemini-embeddin
 - `decide`: each variant is a Decisions `questions` JSON object; each case is the input. One run (it is deterministic). Question `type` must be `choice`, `noul` or `score` (no `yes_no`); a choice question carries `instructions` and `criteria` {option: description}. Read the probabilities: a clear case near 0.3-0.7 means the question or options are wrong, not the cutoff.
 - `embed`: each case file is two texts split by a line `---`; prints cosine for each `MODEL:TASK`. For spotting a task type or model that collapses, not for setting a cutoff.
 - `--grep REGEX` counts matches in every reply and totals them per variant, e.g. names a ban was meant to stop.
-- The model is pinned (no fallback) and nothing is cached or stored, so variants are compared fairly. Every mode rotates across all keys in the key file, starting at a different key each call.
+- The model is pinned (no fallback) and nothing is cached or stored, so variants are compared fairly. Every mode rotates across all keys in the key file. When `~/lti` exists (or `ASK_GEMINI_LTI` points to a checkout), decide and embed run through the LTI grader's own clients, so they share its key parking (kept across processes), daily request caps, per-key pacing and 429 handling. Without it they fall back to plain rotation.
 
 Size: 2-4 variants, 2-3 cases that reach the changed branch (a known failure plus a case that must not change), 2-3 runs each. When probing a ban, include a variant without it. Then bench only the winner. A probe picks wording; it never sets a cutoff, which needs a labeled set held out from the one used to pick it.
 

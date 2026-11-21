@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import random
 import re
 import sys
@@ -30,6 +31,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ask_gemini import DEFAULT_MODEL, Fatal, call, die, load_config  # noqa: E402
+
+# Prefer the LTI grader's Decisions/embeddings clients: they share its per-(model, key)
+# parking (persisted across processes), RPD caps, RPM pacing and 429 classification.
+# Falls back to the plain rotation in post() when the LTI checkout is absent.
+_LTI = Path(os.environ.get("ASK_GEMINI_LTI", Path.home() / "lti"))
+try:
+    sys.path[:0] = [str(_LTI / "scripts"), str(_LTI / "grader_scripts"), str(_LTI)]
+    import gemini_decisions as _gd  # noqa: E402
+    import gemini_embeddings as _ge  # noqa: E402
+except Exception:  # noqa: BLE001 - any import failure means "no LTI", use the fallback
+    _gd = _ge = None
+_NO_CACHE = {"llm_cache_days": 0}  # probes always hit the API
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 RETRYABLE = {429, 500, 502, 503, 504}
@@ -92,8 +105,14 @@ def run_decide(args, keys, variants, cases):
         questions = json.loads(read(v))
         for c in cases:
             for r in range(args.runs):
-                ans = post(f"{API}/decisions", {"model": "gemini-decision-1", "input": read(c),
-                                                "questions": questions}, keys).get("answers")
+                if _gd:
+                    try:
+                        ans = _gd.decide(keys, read(c), questions, _NO_CACHE)
+                    except _gd.DecisionError as e:
+                        raise Fatal(str(e)) from e
+                else:
+                    ans = post(f"{API}/decisions", {"model": "gemini-decision-1", "input": read(c),
+                                                    "questions": questions}, keys).get("answers")
                 rows.append({"variant": Path(v).stem, "case": Path(c).stem, "run": r + 1,
                              "model": "gemini-decision-1", "text": json.dumps(ans, ensure_ascii=False)})
     return rows
@@ -122,8 +141,15 @@ def run_embed(args, keys, cases):
             parts = re.split(r"^---\s*$", read(c), flags=re.M)
             if len(parts) != 2:
                 die(f"{c}: embed cases need exactly two texts split by a line '---'")
-            body = {"requests": [embed_body(model, task, p.strip()) for p in parts]}
-            vecs = [e["values"] for e in post(f"{API}/models/{model}:batchEmbedContents", body, keys)["embeddings"]]
+            texts = [p.strip() for p in parts]
+            if _ge:
+                try:
+                    vecs = _ge.embed(keys, texts, _NO_CACHE, model=model, task=task)
+                except _ge.EmbeddingError as e:
+                    raise Fatal(str(e)) from e
+            else:
+                body = {"requests": [embed_body(model, task, t) for t in texts]}
+                vecs = [e["values"] for e in post(f"{API}/models/{model}:batchEmbedContents", body, keys)["embeddings"]]
             rows.append({"variant": spec, "case": Path(c).stem, "run": 1, "model": model,
                          "text": f"{cosine(*vecs):.3f}"})
     return rows
