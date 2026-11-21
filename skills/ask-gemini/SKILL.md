@@ -1,6 +1,6 @@
 ---
 name: ask-gemini
-description: Send a prompt to any Google Gemini model through the Gemini Interactions API and get the reply back, for a second opinion or a task Gemini does better. Main use is polishing non-English writing, especially Korean, into native-quality prose, since Claude's Korean tends to sound translated or stiff. Use this whenever you write, translate, or edit Korean (or Japanese, Chinese, or other non-English text) that a person will read (emails, messages, docs, UI strings, worksheets), even if the user doesn't mention Gemini. Also use it when the user says "ask Gemini", "run it by Gemini", "what does Gemini think", or names a Gemini model. Not for writing code that calls the Gemini API (that's gemini-interactions-api).
+description: Send a prompt to any Google Gemini model through the Gemini Interactions API and get the reply back, for a second opinion or a task Gemini does better. Main use is polishing non-English writing, especially Korean, into native-quality prose, since Claude's Korean tends to sound translated or stiff. Use this whenever you write, translate, or edit Korean (or Japanese, Chinese, or other non-English text) that a person will read (emails, messages, docs, UI strings, worksheets), even if the user doesn't mention Gemini. Also use it to probe prompt wording for a Gemini generating call, a Decisions question (gemini-decision-1) or an embedding setup on a few cases before any bench (probe.py), and when the user says "ask Gemini", "run it by Gemini", "what does Gemini think", or names a Gemini model. Not for writing code that calls the Gemini API (that's gemini-interactions-api).
 ---
 
 # ask-gemini
@@ -65,6 +65,24 @@ For Markdown docs, READMEs and anything over a page, "read the result" isn't eno
 ### Korean Markdown trap: particles after bold
 
 `**프리셋 (preset_mode)** 을` polished to `**프리셋(preset_mode)**을` renders a literal `**`: under CommonMark (and GitHub), a closing `**` right after punctuation and right before a letter isn't a closing delimiter. Write `**프리셋**(preset_mode)을` instead, or keep the space. `check_polish.py` catches this.
+
+## Probing prompt wording (probe.py)
+
+Use this before any bench when the question is about wording: does this rule cause the error, does a ban backfire, which question phrasing separates the cases. A handful of probe calls usually answers what three full-class runs and several review rounds did not.
+
+```bash
+uv run -q --script <skill-dir>/scripts/probe.py generate -v v1.txt -v v2.txt -c caseA.txt -c caseB.txt --grep 'REGEX' --out probe/
+uv run -q --script <skill-dir>/scripts/probe.py decide   -v q1.json -v q2.json -c caseA.txt -c caseB.txt
+uv run -q --script <skill-dir>/scripts/probe.py embed    --embed gemini-embedding-001:SEMANTIC_SIMILARITY --embed gemini-embedding-2:SEMANTIC_SIMILARITY -c pair1.txt
+```
+
+- `generate`: each variant is a full prompt; `{{case}}` is replaced by the case text, else the case is appended in `<case>` tags. Default 2 runs per variant x case, `--thinking medium`, `--schema F` for structured output, `--system-file F` shared by all variants. Use the production model and thinking level.
+- `decide`: each variant is a Decisions `questions` JSON object; each case is the input. One run (it is deterministic). Read the probabilities: a clear case near 0.3-0.7 means the question or options are wrong, not the cutoff.
+- `embed`: each case file is two texts split by a line `---`; prints cosine for each `MODEL:TASK`. For spotting a task type or model that collapses, not for setting a cutoff.
+- `--grep REGEX` counts matches in every reply and totals them per variant, e.g. names a ban was meant to stop.
+- The model is pinned (no fallback) and nothing is cached or stored, so variants are compared fairly.
+
+Size: 2-4 variants, 2-3 cases that reach the changed branch (a known failure plus a case that must not change), 2-3 runs each. When probing a ban, include a variant without it. Then bench only the winner. A probe picks wording; it never sets a cutoff, which needs a labeled set held out from the one used to pick it.
 
 ## Free-form requests
 
