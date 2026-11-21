@@ -5,7 +5,7 @@
     {
       "name": "ask-gemini",
       "source": "./",
-      "description": "Let Claude call any Gemini model via the Interactions API — e.g. to polish Korean and other non-English writing."
+      "description": "Let Claude call any Gemini model via the Interactions API: second opinions, native-quality polishing of non-English writing, and prompt-wording probes."
     }
   ]
 }

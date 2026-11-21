@@ -46,7 +46,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import lti_bridge  # noqa: E402
+import quota_hook  # noqa: E402
 
 DEFAULT_MODEL = os.environ.get("ASK_GEMINI_MODEL", "gemini-3.5-flash-lite")
 DEFAULT_FALLBACKS = [m for m in os.environ.get("ASK_GEMINI_FALLBACKS", "gemini-3.1-flash-lite").split(",") if m.strip()]
@@ -227,7 +227,13 @@ def die(msg: str, code: int = 1) -> None:
 
 
 def load_config() -> tuple[list[str], dict]:
-    """Returns (keys, rpd_limits)."""
+    """Returns (keys, rpd_limits) and offers the keys and config to the optional quota hook."""
+    keys, limits, data = _load_keys()
+    quota_hook.enable(keys, data if isinstance(data, dict) else {})
+    return keys, limits
+
+
+def _load_keys() -> tuple[list[str], dict, object]:
     env = os.environ.get("GEMINI_API_KEY", "").strip()
     path = Path(os.environ.get("ASK_GEMINI_KEY_FILE", DEFAULT_KEY_FILE)).expanduser()
     data = None
@@ -237,31 +243,24 @@ def load_config() -> tuple[list[str], dict]:
             data = json.loads(text)
     limits = data.get("llm_rpd_limits", {}) if isinstance(data, dict) else {}
     if env:
-        return [k.strip() for k in env.split(",") if k.strip()], limits
+        return [k.strip() for k in env.split(",") if k.strip()], limits, data
     if not path.is_file():
         die("no API key. Set GEMINI_API_KEY, or point ASK_GEMINI_KEY_FILE at a key file "
             f"(default {DEFAULT_KEY_FILE}). Get a key at https://aistudio.google.com/apikey")
-    if isinstance(data, dict) and data.get("llm_api_key"):
-        lti_bridge.enable(_listify(data["llm_api_key"]), path)
     if isinstance(data, dict):
         for field in JSON_KEY_FIELDS:
             val = data.get(field)
             if isinstance(val, str) and val.strip():
-                return [val.strip()], limits
+                return [val.strip()], limits, data
             if isinstance(val, list):
                 keys = [k.strip() for k in val if isinstance(k, str) and k.strip()]
                 if keys:
-                    return keys, limits
+                    return keys, limits, data
         die(f"{path} is JSON but has none of the fields {', '.join(JSON_KEY_FIELDS)}")
     keys = [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
     if not keys:
         die(f"{path} contains no keys")
-    return keys, limits
-
-
-def _listify(val) -> list[str]:
-    parts = val if isinstance(val, (list, tuple)) else str(val).split(",")
-    return [str(k).strip() for k in parts if str(k).strip()]
+    return keys, limits, data
 
 
 def rpd_limit(model: str, limits: dict) -> int | None:
@@ -308,7 +307,7 @@ def call(genai, keys: list[str], chain: list[str], kwargs: dict, limits: dict):
     last_err = "no attempts made"
 
     def usable(m: str, i: int) -> bool:
-        if i in dead_keys or state.parked_for(m, fps[i]) > 0 or lti_bridge.parked(m, i):
+        if i in dead_keys or state.parked_for(m, fps[i]) > 0 or quota_hook.parked(m, i):
             return False
         lim = rpd_limit(m, limits)
         return not (lim and state.rpd_count(m, fps[i]) >= lim)
@@ -324,7 +323,7 @@ def call(genai, keys: list[str], chain: list[str], kwargs: dict, limits: dict):
                     kind, text = None, ""
                     for attempt in (1, 2):  # second attempt only after an empty reply
                         try:
-                            lti_bridge.before_call(model, i, keys[i])
+                            quota_hook.before_call(model, i, keys[i])
                             client = genai.Client(api_key=keys[i])  # keep a ref; temporaries get closed
                             inter = client.interactions.create(model=model, **kwargs)
                             state.rpd_count(model, fp, bump=True)
@@ -357,7 +356,7 @@ def call(genai, keys: list[str], chain: list[str], kwargs: dict, limits: dict):
                         dead_keys.add(i)
                         continue  # same model, next key
                     if kind == "quota":  # blame the key: park this (model, key), try the next key
-                        lti_bridge.note_429(model, i, text)
+                        quota_hook.note_429(model, i, text)
                         scope = quota_scope(text)
                         if scope == "day":
                             state.park(model, fp, seconds_until_pacific_midnight())

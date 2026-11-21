@@ -1,5 +1,6 @@
 # Local secrets / config — never commit
-grader-config.json
+config.json
+quota_hook.py
 *.key
 .env
 # Skill-creator workspaces

@@ -31,20 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ask_gemini import DEFAULT_MODEL, Fatal, call, die, load_config  # noqa: E402
 
-# Prefer the LTI grader's Decisions/embeddings clients: they share its per-(model, key)
-# parking (persisted across processes), RPD caps, RPM pacing and 429 classification.
-# Falls back to the plain rotation in post() when the LTI checkout is absent.
-import lti_bridge  # noqa: E402
-
-_gd = _ge = None  # set by _lti_clients() once load_config() has enabled the bridge
-
-
-def _lti_clients() -> None:
-    global _gd, _ge
-    if lti_bridge.on():
-        import gemini_decisions as gd  # noqa: PLC0415
-        import gemini_embeddings as ge  # noqa: PLC0415
-        _gd, _ge = gd, ge
+import quota_hook  # noqa: E402
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 RETRYABLE = {429, 500, 502, 503, 504}
@@ -107,11 +94,12 @@ def run_decide(args, keys, variants, cases):
         questions = json.loads(read(v))
         for c in cases:
             for r in range(args.runs):
-                if _gd:
+                hook = quota_hook.get("decide")
+                if hook:
                     try:
-                        ans = _gd.decide(keys, read(c), questions, {**lti_bridge.config(), "llm_cache_days": 0})
-                    except _gd.DecisionError as e:
-                        raise Fatal(str(e)) from e
+                        ans = hook(keys, read(c), questions, {**quota_hook.config(), "llm_cache_days": 0})
+                    except Exception as e:  # noqa: BLE001 - hook errors end the probe cleanly
+                        raise Fatal(f"quota hook decide: {e}") from e
                 else:
                     ans = post(f"{API}/decisions", {"model": "gemini-decision-1", "input": read(c),
                                                     "questions": questions}, keys).get("answers")
@@ -144,11 +132,12 @@ def run_embed(args, keys, cases):
             if len(parts) != 2:
                 die(f"{c}: embed cases need exactly two texts split by a line '---'")
             texts = [p.strip() for p in parts]
-            if _ge:
+            hook = quota_hook.get("embed")
+            if hook:
                 try:
-                    vecs = _ge.embed(keys, texts, {**lti_bridge.config(), "llm_cache_days": 0}, model=model, task=task)
-                except _ge.EmbeddingError as e:
-                    raise Fatal(str(e)) from e
+                    vecs = hook(keys, texts, {**quota_hook.config(), "llm_cache_days": 0}, model=model, task=task)
+                except Exception as e:  # noqa: BLE001
+                    raise Fatal(f"quota hook embed: {e}") from e
             else:
                 body = {"requests": [embed_body(model, task, t) for t in texts]}
                 vecs = [e["values"] for e in post(f"{API}/models/{model}:batchEmbedContents", body, keys)["embeddings"]]
@@ -196,7 +185,6 @@ def main() -> None:
         die("embed mode needs at least one --embed MODEL:TASK", 2)
     args.runs = args.runs or (2 if args.mode == "generate" else 1)
     keys, limits = load_config()
-    _lti_clients()
     try:
         if args.mode == "generate":
             rows = run_generate(args, keys, limits, args.variant, args.case)
