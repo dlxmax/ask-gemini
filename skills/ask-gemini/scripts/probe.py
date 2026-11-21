@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import random
 import re
 import sys
@@ -35,14 +34,17 @@ from ask_gemini import DEFAULT_MODEL, Fatal, call, die, load_config  # noqa: E40
 # Prefer the LTI grader's Decisions/embeddings clients: they share its per-(model, key)
 # parking (persisted across processes), RPD caps, RPM pacing and 429 classification.
 # Falls back to the plain rotation in post() when the LTI checkout is absent.
-_LTI = Path(os.environ.get("ASK_GEMINI_LTI", Path.home() / "lti"))
-try:
-    sys.path[:0] = [str(_LTI / "scripts"), str(_LTI / "grader_scripts"), str(_LTI)]
-    import gemini_decisions as _gd  # noqa: E402
-    import gemini_embeddings as _ge  # noqa: E402
-except Exception:  # noqa: BLE001 - any import failure means "no LTI", use the fallback
-    _gd = _ge = None
-_NO_CACHE = {"llm_cache_days": 0}  # probes always hit the API
+import lti_bridge  # noqa: E402
+
+_gd = _ge = None  # set by _lti_clients() once load_config() has enabled the bridge
+
+
+def _lti_clients() -> None:
+    global _gd, _ge
+    if lti_bridge.on():
+        import gemini_decisions as gd  # noqa: PLC0415
+        import gemini_embeddings as ge  # noqa: PLC0415
+        _gd, _ge = gd, ge
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 RETRYABLE = {429, 500, 502, 503, 504}
@@ -107,7 +109,7 @@ def run_decide(args, keys, variants, cases):
             for r in range(args.runs):
                 if _gd:
                     try:
-                        ans = _gd.decide(keys, read(c), questions, _NO_CACHE)
+                        ans = _gd.decide(keys, read(c), questions, {**lti_bridge.config(), "llm_cache_days": 0})
                     except _gd.DecisionError as e:
                         raise Fatal(str(e)) from e
                 else:
@@ -144,7 +146,7 @@ def run_embed(args, keys, cases):
             texts = [p.strip() for p in parts]
             if _ge:
                 try:
-                    vecs = _ge.embed(keys, texts, _NO_CACHE, model=model, task=task)
+                    vecs = _ge.embed(keys, texts, {**lti_bridge.config(), "llm_cache_days": 0}, model=model, task=task)
                 except _ge.EmbeddingError as e:
                     raise Fatal(str(e)) from e
             else:
@@ -194,6 +196,7 @@ def main() -> None:
         die("embed mode needs at least one --embed MODEL:TASK", 2)
     args.runs = args.runs or (2 if args.mode == "generate" else 1)
     keys, limits = load_config()
+    _lti_clients()
     try:
         if args.mode == "generate":
             rows = run_generate(args, keys, limits, args.variant, args.case)
