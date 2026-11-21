@@ -2,7 +2,7 @@
 
 A [Claude Code](https://claude.com/claude-code) skill that lets Claude call any Google Gemini model through the [Gemini Interactions API](https://ai.google.dev/gemini-api/docs/interactions) and use the reply.
 
-The main use is **polishing non-English writing**. Claude's Korean, for example, is usually correct but often sounds translated. With this skill, Claude writes the content and then has Gemini rewrite it into natural, native-quality prose. Korean defaults to 해요체 (casual-polite), and Claude checks the result before giving it to you. You can also ask Gemini for a second opinion on anything.
+The main use is **polishing non-English writing**. Claude's Korean, for example, is usually correct but often sounds translated. With this skill, Claude writes the content and then has Gemini rewrite it into natural, native-quality prose. Korean defaults to 해요체 (casual-polite), and Claude checks the result before giving it to you. You can also ask Gemini for a second opinion on anything, or use `scripts/probe.py` to compare 2-4 prompt wordings on a few cases (generate, Decisions or embeddings) before a full bench.
 
 ## Install
 
@@ -83,6 +83,7 @@ Parks are stored in `~/.cache/ask-gemini/parks.json`, or in `$ASK_GEMINI_STATE_D
 Two optional settings:
 
 - **Per-day caps:** add `"llm_rpd_limits": {"flash-lite": 500}` to the config JSON, mapping a model-name substring to a request count. The script then stops using a key for that model once it hits the cap, without spending a request to find out.
+- **TABot LTI grader:** if `~/lti` (or `$ASK_GEMINI_LTI`) holds the grader and the config's `llm_api_key` list is the grader's, every call, for every model, uses the grader's quota state instead: its saved parks, daily caps, cross-process pacing and 429 handling, with parks written back so the grader sees them.
 - **Shared parks:** if another tool uses the same keys in the same order, set `ASK_GEMINI_EXTRA_PARKS` to its park file to respect its parks (read-only). The file format is `{"day_dead": [[model, key_index, until_epoch]], "cooldown": [...]}`.
 
 ## Privacy
