@@ -77,10 +77,10 @@ uv run -q --script <skill-dir>/scripts/probe.py embed    --embed gemini-embeddin
 ```
 
 - `generate`: each variant is a full prompt; `{{case}}` is replaced by the case text, else the case is appended in `<case>` tags. Default 2 runs per variant x case, `--thinking medium`, `--schema F` for structured output, `--system-file F` shared by all variants. Use the production model and thinking level.
-- `decide`: each variant is a Decisions `questions` JSON object; each case is the input. One run (it is deterministic). Read the probabilities: a clear case near 0.3-0.7 means the question or options are wrong, not the cutoff.
+- `decide`: each variant is a Decisions `questions` JSON object; each case is the input. One run (it is deterministic). Question `type` must be `choice`, `noul` or `score` (no `yes_no`); a choice question carries `instructions` and `criteria` {option: description}. Read the probabilities: a clear case near 0.3-0.7 means the question or options are wrong, not the cutoff.
 - `embed`: each case file is two texts split by a line `---`; prints cosine for each `MODEL:TASK`. For spotting a task type or model that collapses, not for setting a cutoff.
 - `--grep REGEX` counts matches in every reply and totals them per variant, e.g. names a ban was meant to stop.
-- The model is pinned (no fallback) and nothing is cached or stored, so variants are compared fairly.
+- The model is pinned (no fallback) and nothing is cached or stored, so variants are compared fairly. Every mode rotates across all keys in the key file, starting at a different key each call.
 
 Size: 2-4 variants, 2-3 cases that reach the changed branch (a known failure plus a case that must not change), 2-3 runs each. When probing a ban, include a variant without it. Then bench only the winner. A probe picks wording; it never sets a cutoff, which needs a labeled set held out from the one used to pick it.
 

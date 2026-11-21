@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import re
 import sys
 import urllib.error
@@ -32,6 +33,7 @@ from ask_gemini import DEFAULT_MODEL, Fatal, call, die, load_config  # noqa: E40
 
 API = "https://generativelanguage.googleapis.com/v1beta"
 RETRYABLE = {429, 500, 502, 503, 504}
+_NEXT = random.randrange(1 << 16)  # spread decide/embed calls across keys
 
 
 def read(p: str) -> str:
@@ -43,9 +45,13 @@ def fill(prompt: str, case: str) -> str:
 
 
 def post(url: str, body: dict, keys: list[str]) -> dict:
-    """Try each key once; retry only on quota/server errors. Never prints keys."""
+    """Rotate: start at the next key each call, try each key once; retry only on quota/server
+    errors. Never prints keys."""
+    global _NEXT
     errors = []
-    for i, key in enumerate(keys):
+    start, _NEXT = _NEXT, (_NEXT + 1) % len(keys)
+    for i in [(start + j) % len(keys) for j in range(len(keys))]:
+        key = keys[i]
         req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
         try:
