@@ -31,10 +31,10 @@ probe.py embed    --embed gemini-embedding-001:SEMANTIC_SIMILARITY -c pair.txt
 ```
 
 - generate: `{{case}}` in the variant takes the case, else appended in `<case>`. Default 2 runs. Match production model and thinking.
-- decide: variant file is the bare questions map, keyed by question id: `{"keep": {"type": "choice", "instructions": "...", "criteria": {"kept": "...", "lost_subject": "..."}}}`. No `{"questions": ...}` wrapper, no bare question. Type `choice|noul|score` only. A question judging meaning gets the source (or its slice) in the case file, not only the item. Clear case at P 0.3-0.7 = bad question, not bad cutoff.
+- decide: variant = questions map by id, no wrapper: `{"keep": {"type": "choice", "instructions": "...", "criteria": {"kept": "...", "lost": "..."}}}`. Type `choice|noul|score`. Meaning checks: put the source in the case file. Clear case at P 0.3-0.7 = bad question, not bad cutoff.
 - embed: case = two texts split by a `---` line; prints cosine.
-- Run it directly under `timeout 600`, foreground or `run_in_background`; never behind a `pgrep`/`until` wait loop (`pgrep -f` matches the loop's own command line, so the probe never starts). Output is buffered until the run ends: no output yet is not an API fault. Before blaming overload, check the process is running and read stderr.
-- Cheapest first: 1 run, 2 cases, report in a few lines, iterate. Probe the narrow sub-job alone (a 3-line prompt + minimal input), not the whole production prompt.
+- Run directly under `timeout 600`, not behind a `pgrep` wait loop (`pgrep -f` matches the loop itself). Output prints only at the end; check the process and stderr before blaming the API.
+- Cheapest first: 1 run, 2 cases; probe the narrow sub-job, not the whole production prompt.
 - Pinned model, no cache. Size: 2-4 variants, 2-3 cases on the changed branch (a failure + a must-not-change), 2-3 runs; probing a ban, include a variant without it. Bench only the winner. Never set a cutoff from a probe.
 
 ## Free-form
