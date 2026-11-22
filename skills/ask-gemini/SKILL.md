@@ -31,7 +31,7 @@ probe.py embed    --embed gemini-embedding-001:SEMANTIC_SIMILARITY -c pair.txt
 ```
 
 - generate: `{{case}}` in the variant takes the case, else appended in `<case>`. Default 2 runs. Match production model and thinking.
-- decide: variant = questions map by id, no wrapper: `{"keep": {"type": "choice", "instructions": "...", "criteria": {"kept": "...", "lost": "..."}}}`. Type `choice|noul|score`. Meaning checks: put the source in the case file. Clear case at P 0.3-0.7 = bad question, not bad cutoff.
+- decide: variant = questions map by id, no wrapper: `{"keep": {"type": "choice", "instructions": "...", "criteria": {"kept": "...", "lost": "..."}}}`. Type `choice|noul|score`. Case file = plain input text, no JSON (the item; for meaning checks, the source after it). Meaning checks: put the source in the case file. Clear case at P 0.3-0.7 = bad question, not bad cutoff.
 - embed: case = two texts split by a `---` line; prints cosine.
 - Run directly under `timeout 600`, not behind a `pgrep` wait loop (`pgrep -f` matches the loop itself). Output prints only at the end; check the process and stderr before blaming the API.
 - Cheapest first: 1 run, 2 cases; probe the narrow sub-job, not the whole production prompt.
