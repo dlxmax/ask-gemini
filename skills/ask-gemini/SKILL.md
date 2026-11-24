@@ -36,6 +36,7 @@ probe.py embed    --embed gemini-embedding-001:SEMANTIC_SIMILARITY -c pair.txt
 - Run directly under `timeout 600`, not behind a `pgrep` wait loop (`pgrep -f` matches the loop itself). Output prints only at the end; check the process and stderr before blaming the API.
 - Cheapest first: 1 run, 2 cases; probe the narrow sub-job, not the whole production prompt.
 - Pinned model, no cache. Size: 2-4 variants, 2-3 cases on the changed branch (a failure + a must-not-change), 2-3 runs; probing a ban, include a variant without it. Bench only the winner. Never set a cutoff from a probe.
+- Student data: no HUFS ids (9-digit) or full names in probe cases, benches or polish drafts. Name case files by e-Class id and call the student by short name; in the TABot LTI, run case text through `ltikit.llm_redact.for_llm` first.
 
 ## Free-form
 
