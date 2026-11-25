@@ -1,7 +1,7 @@
 {
   "name": "ask-gemini",
   "description": "Let Claude call any Gemini model via the Interactions API: second opinions, native-quality polishing of non-English writing, and prompt-wording probes.",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "author": { "name": "dlxmax" },
   "homepage": "https://github.com/dlxmax/ask-gemini",
   "repository": "https://github.com/dlxmax/ask-gemini",

@@ -40,6 +40,40 @@ import quota_hook  # noqa: E402
 API = "https://generativelanguage.googleapis.com/v1beta"
 RETRYABLE = {429, 500, 502, 503, 504}
 _NEXT = random.randrange(1 << 16)  # spread decide/embed calls across keys
+OUT: Path | None = None
+ID_RE = re.compile(r"(?<!\d)\d{9}(?!\d)")  # HUFS student id
+
+
+def version() -> str:
+    try:
+        return json.loads((Path(__file__).resolve().parents[3] / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except (OSError, KeyError, ValueError):
+        return "unknown"
+
+
+def emit(rows: list[dict]) -> list[dict]:
+    """Append rows to results.jsonl and per-call files now, so a timeout keeps finished cells."""
+    if OUT:
+        with (OUT / "results.jsonl").open("a", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                name = re.sub(r"[^\w.-]", "_", f"{r['variant']}__{r['case']}__{r['run']}.txt")
+                (OUT / name).write_text(r.get("text") or f"ERROR: {r.get('error')}", encoding="utf-8")
+    return rows
+
+
+def failed(variant: str, case: str, run: int, model: str, err: Exception) -> dict:
+    print(f"FAILED {variant} x {case} run{run}: {str(err)[:200]}", file=sys.stderr)
+    return {"variant": variant, "case": case, "run": run, "model": model, "text": "", "error": str(err)[:500]}
+
+
+def strip_private(obj):
+    """Drop `_`-prefixed keys (notes, sets) the Decisions API rejects."""
+    if isinstance(obj, dict):
+        return {k: strip_private(v) for k, v in obj.items() if not str(k).startswith("_")}
+    if isinstance(obj, list):
+        return [strip_private(v) for v in obj]
+    return obj
 
 
 def read(p: str) -> str:
@@ -106,7 +140,10 @@ def class_chain(pinned: str) -> list[str]:
 
 
 def run_generate(args, keys, limits, variants, cases):
-    from google import genai
+    try:
+        from google import genai
+    except ImportError:
+        die("google-genai not importable; run with: uv run --script " + str(Path(__file__).resolve()), 2)
     chain = class_chain(args.model) if args.fallback_class else [args.model]
     if args.fallback_class:
         print(f"class chain: {', '.join(chain)}", file=sys.stderr)
@@ -115,15 +152,16 @@ def run_generate(args, keys, limits, variants, cases):
         errors = []
         for model in chain:
             try:
-                rows += generate_case(genai, args, keys, limits, variants, c, model)
+                rows += emit(generate_case(genai, args, keys, limits, variants, c, model))
                 break
             except Fatal as e:
-                if len(chain) == 1:
-                    raise
                 errors.append(f"{model}: {str(e)[:200]}")
-                print(f"case {Path(c).stem}: {model} failed, rerunning case on next model", file=sys.stderr)
+                if model != chain[-1]:
+                    print(f"case {Path(c).stem}: {model} failed, rerunning case on next model", file=sys.stderr)
         else:
-            raise Fatal(f"case {Path(c).stem}: every model in the class failed ({'; '.join(errors)})")
+            err = Fatal("; ".join(errors))
+            rows += emit([failed(Path(v).stem, Path(c).stem, r + 1, chain[-1], err)
+                          for v in variants for r in range(args.runs)])
     return rows
 
 
@@ -147,20 +185,26 @@ def generate_case(genai, args, keys, limits, variants, c, model):
 def run_decide(args, keys, variants, cases):
     rows = []
     for v in variants:
-        questions = json.loads(read(v))
+        questions = strip_private(json.loads(read(v)))
         for c in cases:
             for r in range(args.runs):
                 hook = quota_hook.get("decide")
-                if hook:
-                    try:
-                        ans = hook(keys, read(c), questions, {**quota_hook.config(), "llm_cache_days": 0})
-                    except Exception as e:  # noqa: BLE001 - hook errors end the probe cleanly
-                        raise Fatal(f"quota hook decide: {e}") from e
-                else:
-                    ans = post(f"{API}/decisions", {"model": "gemini-decision-1", "input": read(c),
-                                                    "questions": questions}, keys).get("answers")
-                rows.append({"variant": Path(v).stem, "case": Path(c).stem, "run": r + 1,
-                             "model": "gemini-decision-1", "text": json.dumps(ans, ensure_ascii=False)})
+                try:
+                    if hook:
+                        try:
+                            ans = hook(keys, read(c), questions, {**quota_hook.config(), "llm_cache_days": 0})
+                        except Exception as e:  # noqa: BLE001 - hook errors become a failed cell
+                            raise Fatal(f"quota hook decide: {e}") from e
+                    else:
+                        ans = post(f"{API}/decisions", {"model": "gemini-decision-1", "input": read(c),
+                                                        "questions": questions}, keys).get("answers")
+                except Fatal as e:
+                    if "HTTP 400" in str(e):
+                        raise  # a bad question fails every cell the same way
+                    rows += emit([failed(Path(v).stem, Path(c).stem, r + 1, "gemini-decision-1", e)])
+                    continue
+                rows += emit([{"variant": Path(v).stem, "case": Path(c).stem, "run": r + 1,
+                               "model": "gemini-decision-1", "text": json.dumps(ans, ensure_ascii=False)}])
     return rows
 
 
@@ -189,16 +233,22 @@ def run_embed(args, keys, cases):
                 die(f"{c}: embed cases need exactly two texts split by a line '---'")
             texts = [p.strip() for p in parts]
             hook = quota_hook.get("embed")
-            if hook:
-                try:
-                    vecs = hook(keys, texts, {**quota_hook.config(), "llm_cache_days": 0}, model=model, task=task)
-                except Exception as e:  # noqa: BLE001
-                    raise Fatal(f"quota hook embed: {e}") from e
-            else:
-                body = {"requests": [embed_body(model, task, t) for t in texts]}
-                vecs = [e["values"] for e in post(f"{API}/models/{model}:batchEmbedContents", body, keys)["embeddings"]]
-            rows.append({"variant": spec, "case": Path(c).stem, "run": 1, "model": model,
-                         "text": f"{cosine(*vecs):.3f}"})
+            try:
+                if hook:
+                    try:
+                        vecs = hook(keys, texts, {**quota_hook.config(), "llm_cache_days": 0}, model=model, task=task)
+                    except Exception as e:  # noqa: BLE001
+                        raise Fatal(f"quota hook embed: {e}") from e
+                else:
+                    body = {"requests": [embed_body(model, task, t) for t in texts]}
+                    vecs = [e["values"] for e in post(f"{API}/models/{model}:batchEmbedContents", body, keys)["embeddings"]]
+            except Fatal as e:
+                if "HTTP 400" in str(e):
+                    raise
+                rows += emit([failed(spec, Path(c).stem, 1, model, e)])
+                continue
+            rows += emit([{"variant": spec, "case": Path(c).stem, "run": 1, "model": model,
+                           "text": f"{cosine(*vecs):.3f}"}])
     return rows
 
 
@@ -211,7 +261,7 @@ def summarize(rows, grep):
         note = f" (ran on {', '.join(models)})" if models != [pinned] else ""
         print(f"\n## case: {case}{note}")
         for r in (x for x in rows if x["case"] == case):
-            text = r["text"].strip().replace("\n", " ")
+            text = f"FAILED: {r['error'][:200]}" if r.get("error") else r["text"].strip().replace("\n", " ")
             hit = f" [grep:{len(pat.findall(r['text']))}]" if pat else ""
             print(f"- {r['variant']} run{r['run']}{hit}: {text[:400]}")
     if pat:
@@ -227,7 +277,7 @@ def main() -> None:
     p.add_argument("mode", choices=["generate", "decide", "embed"])
     p.add_argument("-v", "--variant", action="append", default=[], help="Variant file, repeatable.")
     p.add_argument("-c", "--case", action="append", required=True, help="Case file, repeatable.")
-    p.add_argument("-n", "--runs", type=int, help="Calls per variant x case (generate 2, decide 1).")
+    p.add_argument("-n", "--runs", type=int, help="Calls per variant x case (generate 2; decide/embed 1, deterministic).")
     p.add_argument("-m", "--model", default=DEFAULT_MODEL, help="generate: pinned model.")
     p.add_argument("--fallback-class", action="store_true",
                    help="generate: on failure rerun the case on another model of the same class.")
@@ -237,14 +287,25 @@ def main() -> None:
     p.add_argument("--embed", action="append", default=[], metavar="MODEL:TASK",
                    help="embed: e.g. gemini-embedding-001:SEMANTIC_SIMILARITY, repeatable.")
     p.add_argument("--grep", help="Regex counted in every reply (e.g. names a ban should stop).")
-    p.add_argument("--out", help="Directory for replies and results.jsonl.")
+    p.add_argument("--out", help="Directory for replies and results.jsonl (written after each call).")
+    p.add_argument("--allow-ids", action="store_true", help="Allow 9-digit student ids in case files.")
     args = p.parse_args()
 
     if args.mode != "embed" and not args.variant:
         die("give at least one --variant", 2)
     if args.mode == "embed" and not args.embed:
         die("embed mode needs at least one --embed MODEL:TASK", 2)
-    args.runs = args.runs or (2 if args.mode == "generate" else 1)
+    args.runs = args.runs or (2 if args.mode == "generate" else 1)  # decide is deterministic
+    if not args.allow_ids:
+        bad = [c for c in args.case if ID_RE.search(read(c))]
+        if bad:
+            die(f"9-digit student id in {', '.join(bad)}: redact first (or --allow-ids)", 2)
+    print(f"probe.py {version()}", file=sys.stderr)
+    global OUT
+    if args.out:
+        OUT = Path(args.out)
+        OUT.mkdir(parents=True, exist_ok=True)
+        (OUT / "results.jsonl").write_text("", encoding="utf-8")
     keys, limits = load_config()
     try:
         if args.mode == "generate":
@@ -256,15 +317,11 @@ def main() -> None:
     except Fatal as e:
         die(str(e))
 
-    if args.out:
-        out = Path(args.out)
-        out.mkdir(parents=True, exist_ok=True)
-        for r in rows:
-            name = re.sub(r"[^\w.-]", "_", f"{r['variant']}__{r['case']}__{r['run']}.txt")
-            (out / name).write_text(r["text"], encoding="utf-8")
-        (out / "results.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
-                                           encoding="utf-8")
     summarize(rows, args.grep)
+    bad = [r for r in rows if r.get("error")]
+    print(f"\n{len(rows) - len(bad)}/{len(rows)} calls ok", file=sys.stderr)
+    if bad:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
