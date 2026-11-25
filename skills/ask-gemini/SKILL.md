@@ -25,7 +25,7 @@ Long or Markdown docs: one file per call; `--notes` "Edit only the Korean. Headi
 Before any bench, when the question is wording.
 
 ```bash
-probe.py generate -v v1.txt -v v2.txt -c a.txt -c b.txt [--grep RE] [--out DIR] [-m M --thinking L --schema F --system-file F]
+probe.py generate -v v1.txt -v v2.txt -c a.txt -c b.txt [--grep RE] [--out DIR] [-m M --thinking L --schema F --system-file F --fallback-class]
 probe.py decide   -v q1.json -v q2.json -c a.txt
 probe.py embed    --embed gemini-embedding-001:SEMANTIC_SIMILARITY -c pair.txt
 ```
@@ -35,7 +35,7 @@ probe.py embed    --embed gemini-embedding-001:SEMANTIC_SIMILARITY -c pair.txt
 - embed: case = two texts split by a `---` line; prints cosine.
 - Run directly under `timeout 600`, not behind a `pgrep` wait loop (`pgrep -f` matches the loop itself). Output prints only at the end; check the process and stderr before blaming the API.
 - Cheapest first: 1 run, 2 cases; probe the narrow sub-job, not the whole production prompt.
-- Pinned model, no cache. Size: 2-4 variants, 2-3 cases on the changed branch (a failure + a must-not-change), 2-3 runs; probing a ban, include a variant without it. Bench only the winner. Never set a cutoff from a probe.
+- Pinned model, no cache. Gemini overloaded: `--fallback-class` reruns a failing case on another model of the same class (flash-lite, flash incl. Hydrogen, pro), newest first; each case stays on one model and the summary names any case that moved. Config `model_classes` {class: [ids]} overrides the derived class lists. Size: 2-4 variants, 2-3 cases on the changed branch (a failure + a must-not-change), 2-3 runs; probing a ban, include a variant without it. Bench only the winner. Never set a cutoff from a probe.
 - Student data: no HUFS ids (9-digit) or full names in probe cases, benches or polish drafts. Name case files by e-Class id and call the student by short name; in the TABot LTI, run case text through `ltikit.llm_redact.for_llm` first.
 
 ## Free-form

@@ -13,7 +13,11 @@ Modes:
   embed     each case file holds two texts split by a line `---`; prints cosine per
             (model, task) given by --embed MODEL:TASK (repeatable).
 
-The model is pinned (no fallback) so variants are compared on one model. Nothing is cached.
+The model is pinned (no fallback) so variants are compared on one model. With --fallback-class,
+generate falls back within the pinned model's class (flash-lite, flash, pro), newer versions
+first; all variants and runs of one case share one model, and a case that fails partway is rerun
+whole on the next model. Class members come from config "model_classes" {class: [ids]} if set,
+else from every gemini-* id in the config plus ASK_GEMINI_MODEL/FALLBACKS. Nothing is cached.
 Replies go to --out DIR (one file per call plus results.jsonl); a side-by-side summary prints.
 """
 from __future__ import annotations
@@ -29,7 +33,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ask_gemini import DEFAULT_MODEL, Fatal, call, die, load_config  # noqa: E402
+from ask_gemini import DEFAULT_FALLBACKS, DEFAULT_MODEL, Fatal, _load_keys, call, die, load_config  # noqa: E402
 
 import quota_hook  # noqa: E402
 
@@ -69,22 +73,74 @@ def post(url: str, body: dict, keys: list[str]) -> dict:
     raise Fatal(f"no key answered ({'; '.join(errors)})")
 
 
+def model_class(model: str) -> str | None:
+    m = model.lower()
+    if "flash-lite" in m:
+        return "flash-lite"
+    if "-flash" in m or "hydrogen" in m:  # Hydrogen is the Flash successor
+        return "flash"
+    if "-pro" in m:
+        return "pro"
+    return None
+
+
+def version_key(model: str) -> tuple:
+    nums = re.findall(r"\d+(?:\.\d+)?", model)
+    v = float(nums[0]) if nums else 0.0
+    return (-v, "preview" in model, model)  # newest first, GA before preview
+
+
+def class_chain(pinned: str) -> list[str]:
+    cls = model_class(pinned)
+    if not cls:
+        die(f"--fallback-class: no known class for {pinned} (flash-lite, flash, pro)", 2)
+    _, _, data = _load_keys()
+    data = data if isinstance(data, dict) else {}
+    named = data.get("model_classes", {}).get(cls) if isinstance(data.get("model_classes"), dict) else None
+    if named:
+        pool = [m for m in named if isinstance(m, str)]
+    else:
+        pool = set(re.findall(r'"(gemini-[\w.-]+)"', json.dumps(data))) | {DEFAULT_MODEL, *DEFAULT_FALLBACKS}
+        pool = [m for m in pool if model_class(m) == cls and "embedding" not in m and "decision" not in m]
+    return [pinned] + sorted({m for m in pool if m != pinned}, key=version_key)
+
+
 def run_generate(args, keys, limits, variants, cases):
     from google import genai
+    chain = class_chain(args.model) if args.fallback_class else [args.model]
+    if args.fallback_class:
+        print(f"class chain: {', '.join(chain)}", file=sys.stderr)
+    rows = []
+    for c in cases:
+        errors = []
+        for model in chain:
+            try:
+                rows += generate_case(genai, args, keys, limits, variants, c, model)
+                break
+            except Fatal as e:
+                if len(chain) == 1:
+                    raise
+                errors.append(f"{model}: {str(e)[:200]}")
+                print(f"case {Path(c).stem}: {model} failed, rerunning case on next model", file=sys.stderr)
+        else:
+            raise Fatal(f"case {Path(c).stem}: every model in the class failed ({'; '.join(errors)})")
+    return rows
+
+
+def generate_case(genai, args, keys, limits, variants, c, model):
     rows = []
     for v in variants:
-        for c in cases:
-            for r in range(args.runs):
-                kw: dict = {"input": fill(read(v), read(c)), "store": False,
-                            "generation_config": {"thinking_level": args.thinking}}
-                if args.system_file:
-                    kw["system_instruction"] = read(args.system_file)
-                if args.schema:
-                    kw["response_format"] = [{"type": "text", "mime_type": "application/json",
-                                              "schema": json.loads(read(args.schema))}]
-                inter, model = call(genai, keys, [args.model], kw, limits)
-                rows.append({"variant": Path(v).stem, "case": Path(c).stem, "run": r + 1,
-                             "model": model, "text": inter.output_text or ""})
+        for r in range(args.runs):
+            kw: dict = {"input": fill(read(v), read(c)), "store": False,
+                        "generation_config": {"thinking_level": args.thinking}}
+            if args.system_file:
+                kw["system_instruction"] = read(args.system_file)
+            if args.schema:
+                kw["response_format"] = [{"type": "text", "mime_type": "application/json",
+                                          "schema": json.loads(read(args.schema))}]
+            inter, used = call(genai, keys, [model], kw, limits)
+            rows.append({"variant": Path(v).stem, "case": Path(c).stem, "run": r + 1,
+                         "model": used, "text": inter.output_text or ""})
     return rows
 
 
@@ -149,8 +205,11 @@ def run_embed(args, keys, cases):
 def summarize(rows, grep):
     pat = re.compile(grep, re.I) if grep else None
     cases = sorted({r["case"] for r in rows})
+    pinned = rows[0]["model"] if rows else None
     for case in cases:
-        print(f"\n## case: {case}")
+        models = sorted({r["model"] for r in rows if r["case"] == case})
+        note = f" (ran on {', '.join(models)})" if models != [pinned] else ""
+        print(f"\n## case: {case}{note}")
         for r in (x for x in rows if x["case"] == case):
             text = r["text"].strip().replace("\n", " ")
             hit = f" [grep:{len(pat.findall(r['text']))}]" if pat else ""
@@ -170,6 +229,8 @@ def main() -> None:
     p.add_argument("-c", "--case", action="append", required=True, help="Case file, repeatable.")
     p.add_argument("-n", "--runs", type=int, help="Calls per variant x case (generate 2, decide 1).")
     p.add_argument("-m", "--model", default=DEFAULT_MODEL, help="generate: pinned model.")
+    p.add_argument("--fallback-class", action="store_true",
+                   help="generate: on failure rerun the case on another model of the same class.")
     p.add_argument("--thinking", default="medium", help="generate: thinking_level (per-model enum).")
     p.add_argument("--system-file", help="generate: system instruction shared by all variants.")
     p.add_argument("--schema", help="generate: JSON schema file for structured output.")
